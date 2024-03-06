@@ -20,55 +20,43 @@ class Output(ABC):
 
 class CLI_Input(Input):
         
-    __PROMPTS = {'command_prompt': 'Please enter your command: ',
+    __PROMPTS = {
+                'command_prompt': 'Please enter your command: ',
+                'arch_depth': 'How many days: ',
+                }
 
-               'search_prompt_pattern': 'Enter a pattern to search: ',
-               'search_prompt_scope': 'Enter field to search (or enter to search everywhere): ',
-
-               'user_name_prompt': 'Enter contact name: ',
-               'user_del_prompt': 'Enter contact name to delete: ',
-
-               'phone_prompt': 'Enter phone number: ',
-               'phone_del_prompt': 'Enter phone to delete: ',
-               'old_phone_prompt': 'Enter old phone number: ',
-               'new_phone_prompt': 'Enter new phone number: ',
-
-               'birthday_prompt': 'Enter birthday(yyyy-mm-dd): ',
-               'birthday_search_prompt': 'Enter quantity of days: ',
-
-               'email_prompt': 'Enter email: ',
-               'email_del_prompt': 'Enter e-mail to delete: ',
-               'old_email_prompt': 'Enter old e-mail: ',
-               'new_email_prompt': 'Enter new e-mail: ',
-
-               'address_prompt': 'Enter address: ',
-               'address_del_prompt': 'Enter address to delete: ',
-               'old_address_prompt': 'Enter old address: ',
-               'new_address_prompt': 'Enter new address: ',
-
-               'memo_prompt': 'Enter memo: ',
-               'memo_del_prompt': 'Enter memo to delete: ',
-               'old_memo_prompt': 'Enter old memo: ',
-               'new_memo_prompt': 'Enter new memo: '
-               }
-
-    def __init__(self, my_book):
-        self.__book = my_book
+    def __init__(self, api):
+        self.__api = api
         self.__NAME_COMMANDS = {
 
-        'help': self.__help,
+        'help': self.help,
         'hello': self.__hello,
         'close': self.__exit,
         'exit': self.__exit,
 
-        'today': self.__add_addr,
-        'past': self.__delete_addr,
+        'today': self.__today,
+        'past': self.__past,
     }
 
-    def __hello(self):
-        return ('How can I help you?', 'normal')
+    def __today(self):
+        resp, errors = self.__api.run(days_2_fetch=0)
+        return resp, errors
 
-    def __help(self):
+    def __past(self):
+        days = input(self.__PROMPTS['arch_depth'])
+        try:
+            days= int(days)
+        except:
+            pass
+        resp, errors = self.__api.run(days_2_fetch=days)
+        return resp, errors
+
+    def __hello(self):
+        resp = ['How can I help you?', 'normal']
+        errors = None
+        return resp, errors
+
+    def help(self):
         help_list = [
             ['Command', 'Description'], #header
             ['help', 'command description'],
@@ -79,26 +67,29 @@ class CLI_Input(Input):
             ['today', 'fetch current exchange rates'],
             ['past', 'fetch echange rates for past <days>'],
         ]
-        return (help_list, 'table')
+        resp = [help_list, 'table']
+        errors = None
+        return resp, errors
 
     def __exit(self):
-        return ('Good bye!', 'normal')
-
-        
+        resp =['Good bye!', 'normal']
+        errors = None
+        return resp, errors
+  
     def get_input(self):
         try:
             user_input = prompt(self.__PROMPTS.get('command_prompt'), completer=WordCompleter(
                 self.__NAME_COMMANDS.keys(), ignore_case=True))
 
-            return_data = self.__NAME_COMMANDS[user_input]()
+            return_data, errors = self.__NAME_COMMANDS[user_input]()
 
         except KeyboardInterrupt:
-            # user_input_list = ('\nCommand input interrupted. Exiting...',)
             exit()
         except KeyError:
-            return_data = ('Wrong command, try again', 'critical')
+            return_data = None
+            errors = [['Wrong command, try again', 'critical']]
 
-        return return_data
+        return return_data, errors
 
 class CLI_Output(Output):
     def __init__(self):
@@ -110,6 +101,24 @@ class CLI_Output(Output):
                 'header_style': 'bold blue', 
                 'row_style': 'bright_green'
             }
+        }
+        self.__FIELDS_TD = {
+            'Curency_to_name': 'ccy',
+            'Curency_base_name': 'base_ccy',
+            'Curency_base_amount_2_sell': 'buy',
+            'Curency_base_amount_2_buy': 'sale'
+        }
+
+        self.__FIELDS_ARCH = {
+            'Date': 'date',
+            'Curency_to_name': 'currency',
+            'Curency_base_name_head': 'baseCurrencyLit',
+            'Rates': 'exchangeRate',
+            'Curency_base_name_rec': 'baseCurrency',
+            'Curency_base_amount_2_sell_NBU': 'purchaseRateNB',
+            'Curency_base_amount_2_buy_NBU': 'saleRateNB',
+            'Curency_base_amount_2_sell_PB': 'purchaseRate',
+            'Curency_base_amount_2_buy_PB': 'saleRate'
         }
 
     def table(self, title=None, title_style=None, header=[], header_style=None, rows=[], row_style=None):
@@ -146,7 +155,84 @@ class CLI_Output(Output):
             value = ''
         return value
 
+    def form_data_structure(self, data) -> list:
+        data, srs = data
+        if srs in ['normal', 'warning', 'critical']:
+            result = [data, srs]
+        elif srs == 'current':
+            header = ['Today', 'Buy', 'Sell']
+            tbl = [header]
+            for item in data:
+                cur = item[self.__FIELDS_TD["Curency_to_name"]]
+                sel_val = [item[self.__FIELDS_TD["Curency_base_amount_2_buy"]], item[self.__FIELDS_TD["Curency_base_name"]]]
+                buy_val = [item[self.__FIELDS_TD["Curency_base_amount_2_sell"]], item[self.__FIELDS_TD["Curency_base_name"]]]
+                tbl.append([cur, buy_val, sel_val])
+            result = [tbl, 'table']
+        elif srs == 'arch':
+            header = ['Date', 'USD Buy', 'USD Sell']
+            tbl = [header]
+            for record in data:
+                data_dict = self.arch_parser(record)
+                dt = data_dict['Date']
+                for tick, price in data_dict['PB'].items():
+                    if tick == 'USD':
+                        usd_buy = [price['buy'], data_dict['Base']]
+                        usd_sell = [price['sell'], data_dict['Base']]
+                        tbl.append([dt, usd_buy, usd_sell])
+            result = [tbl, 'table']
+        elif srs == 'table':
+            result = [data, srs]
+        return result
+
+    def arch_parser(self, data: dict) -> dict:
+        out_dict = {
+            'Date': None,
+            'Base': None,
+            'NBU': {
+                'tick': {
+                    'sell': None,
+                    'buy': None
+                }
+            },
+            'PB': {
+                'tick': {
+                    'sell': None,
+                    'buy': None
+                }
+            },
+        }
+        
+        out_dict['Date'] = data[self.__FIELDS_ARCH['Date']]
+        out_dict['Base'] = data[self.__FIELDS_ARCH['Curency_base_name_head']]
+        
+        for item in data[self.__FIELDS_ARCH['Rates']]:
+            tick = item[self.__FIELDS_ARCH['Curency_to_name']]
+            try:
+                out_dict['NBU'][tick] = {
+                    'sell': item[self.__FIELDS_ARCH['Curency_base_amount_2_buy_NBU']],
+                    'buy': item[self.__FIELDS_ARCH['Curency_base_amount_2_sell_NBU']]
+                }
+            except:
+                pass
+            try:
+                out_dict['PB'][tick] = {
+                    'sell': item[self.__FIELDS_ARCH['Curency_base_amount_2_buy_PB']],
+                    'buy': item[self.__FIELDS_ARCH['Curency_base_amount_2_sell_PB']]
+                }
+            except:
+                pass
+
+        # cleansing
+        try:
+            out_dict['NBU'].pop('tick')
+            out_dict['PB'].pop('tick')
+        except:
+            pass
+        return out_dict
+
     def user_output(self, data):
+
+        data = self.form_data_structure(data=data)
 
         if isinstance(data[0], str):
             console = Console()

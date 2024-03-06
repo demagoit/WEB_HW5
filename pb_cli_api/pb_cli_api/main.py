@@ -6,197 +6,137 @@ import datetime
 from copy import deepcopy
 from CLI_IO import *
 
-URL = {
-    'current':'https://api.privatbank.ua/p24api/pubinfo',
-    'archive': 'https://api.privatbank.ua/p24api/exchange_rates'
-    
-}
 
-PARAMS = {
-    'cash': {'json': None,
-             'exchange': None,
-             'coursid': '5'
-             },
-    'cashless': {'json': None,
-                 'exchange': None,
-                 'coursid': '11'
-                 },
-    'at_date': {'json': None,
-                'date': None}
-}
+class PB_API():
+    def __init__(self):
+        self.__URL = {
+            'current': 'https://api.privatbank.ua/p24api/pubinfo',
+            'archive': 'https://api.privatbank.ua/p24api/exchange_rates'
+            
+        }
 
-FIELDS_TD = {
-    'Curency_to_name': 'ccy',
-    'Curency_base_name': 'base_ccy',
-    'Curency_base_amount_2_sell': 'buy',
-    'Curency_base_amount_2_buy': 'sale'
-}
-
-FIELDS_ARCH = {
-    'Date': 'date',
-    'Curency_to_name': 'currency',
-    'Curency_base_name_head': 'baseCurrencyLit',
-    'Rates': 'exchangeRate',
-    'Curency_base_name_rec': 'baseCurrency',
-    'Curency_base_amount_2_sell_NBU': 'purchaseRateNB',
-    'Curency_base_amount_2_buy_NBU': 'saleRateNB',
-    'Curency_base_amount_2_sell_PB': 'purchaseRate',
-    'Curency_base_amount_2_buy_PB': 'saleRate'
-}
+        self.__PARAMS = {
+            'cash': {'json': None,
+                    'exchange': None,
+                    'coursid': '5'
+                    },
+            'cashless': {'json': None,
+                        'exchange': None,
+                        'coursid': '11'
+                        },
+            'at_date': {'json': None,
+                        'date': None}
+        }
 
 
-async def request(session, url:str):
-    # print(url)
-    try:
-        async with session.get(url) as response:
-            # print(response.url)
-            if response.ok:
-                # print("Status:", response.status)
-                # print("Content-type:", response.headers['content-type'])
-                # print('Cookies: ', response.cookies)
-                # print(response.ok)
-                result = await response.json()
-                return result
-            else:
-                print(f"Error status: {response.status}")
-    except aiohttp.ClientConnectorError as err:
-        print('Connection error: ', str(err))
+    async def fetch(self, urls:list):
+        if platform.system() == 'Windows':
+            asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+        
+        async with aiohttp.ClientSession() as session:
+            url_coroutines = [self.request(session=session, url=url) for url in urls]
+            reply = await asyncio.gather(*url_coroutines, return_exceptions=True)
+            results = []
+            errors = []
+            for result, status in reply:
+                if status == 'OK':
+                    results.append(result)
+                else:
+                    errors.append([result, status])
+            result = result if result else None
+            errors = errors if errors else None
+            return results, errors
 
-def output(data, srs: str = 'msg') -> None:
-    cli_out = CLI_Output()
-    if srs == 'msg':
-        cli_out.user_output([data, 'normal'])
-    elif srs == 'current':
-        header = ['Today', 'Buy', 'Sell']
-        tbl = [header]
-        for item in data:
-            cur = item[FIELDS_TD["Curency_to_name"]]
-            sel_val = [item[FIELDS_TD["Curency_base_amount_2_buy"]], item[FIELDS_TD["Curency_base_name"]]]
-            buy_val = [item[FIELDS_TD["Curency_base_amount_2_sell"]], item[FIELDS_TD["Curency_base_name"]]]
-            tbl.append([cur, buy_val, sel_val])
-        cli_out.user_output([tbl, 'table'])
-    elif srs == 'arch':
-        print(len(data))
-        header = ['Date', 'USD Buy', 'USD Sell']
-        tbl = [header]
-        for record in data:
-            data_dict = arch_parser(record)
-            # print(data_dict)
-            dt = data_dict['Date']
-            for tick, price in data_dict['PB'].items():
-                if tick == 'USD':
-                    usd_buy = [price['buy'], data_dict['Base']]
-                    usd_sell = [price['sell'], data_dict['Base']]
-                    # print([dt, usd_buy, usd_sell])
-                    tbl.append([dt, usd_buy, usd_sell])
-        # print(tbl)
-        cli_out.user_output([tbl, 'table'])
-
-def arch_parser(data: dict) -> dict:
-    out_dict = {
-        'Date': None,
-        'Base': None,
-        'NBU': {
-            'tick': {
-                'sell': None,
-                'buy': None
-            }
-        },
-        'PB': {
-            'tick': {
-                'sell': None,
-                'buy': None
-            }
-        },
-    }
-    
-    out_dict['Date'] = data[FIELDS_ARCH['Date']]
-    out_dict['Base'] = data[FIELDS_ARCH['Curency_base_name_head']]
-    
-    for item in data[FIELDS_ARCH['Rates']]:
-        tick = item[FIELDS_ARCH['Curency_to_name']]
+    async def request(self, session, url:str) -> tuple:
         try:
-            out_dict['NBU'][tick] = {
-                'sell': item[FIELDS_ARCH['Curency_base_amount_2_buy_NBU']],
-                'buy': item[FIELDS_ARCH['Curency_base_amount_2_sell_NBU']]
-            }
-        except:
-            pass
-        try:
-            out_dict['PB'][tick] = {
-                'sell': item[FIELDS_ARCH['Curency_base_amount_2_buy_PB']],
-                'buy': item[FIELDS_ARCH['Curency_base_amount_2_sell_PB']]
-            }
-        except:
-            pass
+            async with session.get(url) as response:
+                if response.ok:
+                    result = await response.json()
+                    return (result, 'OK')
+                else:
+                    msg = f"Error status: {response.status} at URL: {response.url}"
+                    return(msg, 'warning')
+        except aiohttp.ClientConnectorError as err:
+            msg = 'Connection error: ' + str(err)
+            return(msg, 'critical')
 
-    # cleansing
-    try:
-        out_dict['NBU'].pop('tick')
-        out_dict['PB'].pop('tick')
-    except:
-        pass
-    return out_dict
+    def query_builder(self, url:str, params:dict = {}) -> str:
+        if params:
+            par_str = []
+            for key, value in params.items():
+                if value:
+                    par_str.append('='.join([key, value]))
+                else:
+                    par_str.append(key)
+            par_str = '&'.join(par_str)
 
-async def fetch(urls:list):
-    if platform.system() == 'Windows':
-        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-    
-    async with aiohttp.ClientSession() as session:
-        t = [request(session=session, url=url) for url in urls]
-        r = await asyncio.gather(*t, return_exceptions=True)
-        return r
+            req = '?'.join([url, par_str])
+        else:
+            req = url
+        return req
 
-def query_builder(url:str, params:dict = {}) -> str:
-    if params:
-        par_str = []
-        for key, value in params.items():
-            if value:
-                par_str.append('='.join([key, value]))
-            else:
-                par_str.append(key)
-        par_str = '&'.join(par_str)
-
-        req = '?'.join([url, par_str])
-    else:
-        req = url
-    return req
+    def run(self, days_2_fetch: int = 0):
+        if not isinstance(days_2_fetch, int):
+            result = None
+            errors = [('Error: expect int number of days to fetch. 0 - for current exchange rate.','warning')]
+        elif days_2_fetch == 0:
+            # Cash rate
+            urls = [self.query_builder(url=self.__URL['current'], params = self.__PARAMS['cash'])]
+            # # Cashless rate
+            # urls = [self.query_builder(url=URL['current'], params=PARAMS['cashless'])]
+            result, errors = asyncio.run(self.fetch(urls))
+            result = (result[0], 'current') if result else None
+        elif days_2_fetch > 10:
+            result = None
+            errors = [('Can fetch data for max. 10 days.', 'warning')]
+        else:
+            dates = [(datetime.date.today()-datetime.timedelta(days=i)).strftime('%d.%m.%Y') for i in range(days_2_fetch)]
+            
+            urls = []
+            for date in dates:
+                params = deepcopy(self.__PARAMS['at_date'])
+                params['date'] = date
+                urls.append(self.query_builder(url=self.__URL['archive'], params = params))
+            result, errors = asyncio.run(self.fetch(urls))
+            result = (result, 'arch') if result else None
+        return result, errors
 
 
 def main(*args):
-    # output(args, 'msg')
+    pb = PB_API()
+    CLI_In = CLI_Input(api=pb)
+    CLI_out = CLI_Output()
+    
 
     if len(args) == 1:
-        urls = [query_builder(url=URL['current'], params = PARAMS['cash'])]
-        r = asyncio.run(fetch(urls))
-        output('Cash', 'msg')
-        output(r[0], 'current')
+        data, errors = CLI_In.help()
+        CLI_out.user_output(data)
+        
+        while True:
+            data, errors = CLI_In.get_input()
 
-        urls = [query_builder(url=URL['current'], params=PARAMS['cashless'])]
-        r = asyncio.run(fetch(urls))
-        output('Cashless', 'msg')
-        output(r[0], 'current')
+            if data:
+                CLI_out.user_output(data)
+                if data[0] == "Good bye!":
+                    exit()
+            if errors:
+                for error in errors:
+                    CLI_out.user_output(error)
 
     else:
         try:
             days = int(args[1])
         except:
-            output (f'Usage: {args[0]} <days> - to get exhcnge rates for last <days>', 'msg')
+            CLI_out.user_output([f'Usage: {args[0]} <days> - to get exhcnge rates for last <days>', 'warning'])
             sys.exit(1)
 
-        if days > 10:
-            output('Can fetch data for max. 10 days.', 'msg')
-        else:
-            dates = [(datetime.date.today()-datetime.timedelta(days=i)).strftime('%d.%m.%Y') for i in range(days)]
-            
-            urls = []
-            for date in dates:
-                params = deepcopy(PARAMS['at_date'])
-                params['date'] = date
-                urls.append(query_builder(url=URL['archive'], params = params))
-            r = asyncio.run(fetch(urls))
-            # print(r)
-            output(r, 'arch')
+        resp, errors = pb.run(days_2_fetch=days)
+        if resp:
+            CLI_out.user_output(['Archive', 'normal'])
+            CLI_out.user_output(resp)
+        if errors:
+            for error in errors:
+                CLI_out.user_output(error)
 
 
 
